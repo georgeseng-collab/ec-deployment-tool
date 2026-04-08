@@ -6,11 +6,13 @@ st.set_page_config(page_title="Geniebook Deployment 2026", layout="wide")
 
 # --- DATA SOURCE LINKS ---
 SALES_BASE = "https://docs.google.com/spreadsheets/d/15VuRw2_UR6CR8XdkxypjZSQ3QR8Ft7DD5ugy9uAGTco/export?format=csv&gid="
+# GID 1287774189 is the Cal Roadshow 2026 tab
 ROADSHOW_URL = "https://docs.google.com/spreadsheets/d/1CKNsz4O11fTTB1kjb0y3GiIsRBww7ZxQmqpNK0AeLNw/export?format=csv&gid=1287774189"
 
 def clean_currency(value):
     if pd.isna(value): return 0
     if isinstance(value, str):
+        # Cleans $ and commas
         clean = re.sub(r'[^\d.]', '', value)
         return float(clean) if clean else 0
     return float(value)
@@ -23,121 +25,131 @@ def load_data(sales_gid):
 
 st.title("🛡️ EC Weekly Deployment System")
 
-# --- STEP 1: GID INPUT ---
-st.sidebar.header("1. Performance Stats")
+# --- SIDEBAR INPUTS ---
+st.sidebar.header("Step 1: Data Connection")
 sales_gid = st.sidebar.text_input("Enter Sales Stats GID:", placeholder="e.g. 15729384")
+
+# Specifically look for the week range string
+target_week = st.sidebar.selectbox(
+    "Select Planning Week:",
+    options=[
+        "13 Apr - 19 Apr",
+        "20 Apr - 26 Apr",
+        "27 Apr - 03 May",
+        "04 May - 10 May"
+    ]
+)
 
 if sales_gid:
     try:
         df_sales, df_roadshows = load_data(sales_gid)
         
-        # --- SALES LEADERBOARD ---
-        st.subheader("🏆 EC Sales Leaderboard")
+        # --- TAB 1: SALES LEADERBOARD ---
+        st.subheader(f"🏆 EC Sales Leaderboard (Week: {target_week})")
         df_sales['Overall_Value'] = df_sales['Overall'].apply(clean_currency)
+        
         ec_leaderboard = df_sales[['EC Name', 'Overall', 'Overall_Value']].dropna(subset=['EC Name'])
         ec_leaderboard = ec_leaderboard.sort_values(by='Overall_Value', ascending=False).reset_index(drop=True)
         ec_leaderboard.index += 1
+        
         st.dataframe(ec_leaderboard[['EC Name', 'Overall']], use_container_width=True)
 
-        st.divider()
+        # --- ROADSHOW SEARCH LOGIC ---
+        # Search for the week string (e.g. '13 Apr - 19 Apr') in the Master Calendar
+        # We assume the date is in the first or second column
+        mask = df_roadshows.astype(str).apply(lambda x: x.str.contains(target_week, case=False)).any(axis=1)
+        active_week_data = df_roadshows[mask]
 
-        # --- SMART DATE DETECTION ---
-        st.sidebar.header("2. Roadshow Calendar")
-        # Scan the first few columns of the Roadshow Master for anything that looks like a date or week
-        # We look at the first 3 columns where dates are usually kept
-        potential_dates = df_roadshows.iloc[:, 0:3].stack().dropna().unique().tolist()
-        # Filter list to only show strings that look like weeks/dates
-        date_options = [str(d) for d in potential_dates if len(str(d)) > 5] 
-        
-        selected_date = st.sidebar.selectbox("Select the Planning Week:", options=["Choose a date..."] + date_options)
+        if active_week_data.empty:
+            st.warning(f"⚠️ No roadshows found in the Master for the week: {target_week}")
+            st.stop()
 
-        if selected_date != "Choose a date...":
-            # Filter the Master Sheet for the selected week
-            mask = df_roadshows.apply(lambda row: row.astype(str).str.contains(re.escape(selected_date), case=False).any(), axis=1)
-            active_week_rs = df_roadshows[mask]
+        # Get list of venues (using 'Theme' column)
+        active_venues = active_week_data['Theme'].dropna().unique().tolist()
+
+        # --- INTERFACE TABS ---
+        tab1, tab2, tab3 = st.tabs(["🎪 Roadshow Ranking", "👥 Manpower & Pairs", "📅 Generate Schedule"])
+
+        with tab1:
+            st.subheader("Assign Priority & Points")
+            st.write(f"Detected **{len(active_venues)}** venues for this week.")
             
-            # Source Venues from 'Theme' column
-            active_venues = active_week_rs['Theme'].dropna().unique().tolist()
+            rs_ranking_data = pd.DataFrame({
+                "Venue": active_venues,
+                "Points": [0.0] * len(active_venues),
+                "Rank": [i+1 for i in range(len(active_venues))],
+                "HC": [2] * len(active_venues)
+            })
+            
+            manager_input = st.data_editor(rs_ranking_data, hide_index=True, key="rs_editor")
 
-            if not active_venues:
-                st.warning("⚠️ Date found, but no 'Theme' (Venue) was listed on that row.")
-                st.stop()
-
-            # --- TABS ---
-            tab1, tab2, tab3 = st.tabs(["🎪 Roadshow Ranking", "👥 Manpower & Pairs", "📅 Generate Schedule"])
-
-            with tab1:
-                st.subheader(f"Priority & Points for: {selected_date}")
-                rs_data = pd.DataFrame({
-                    "Venue": active_venues,
-                    "Ranking Points": [0.0] * len(active_venues),
-                    "Priority": [i+1 for i in range(len(active_venues))],
-                    "Staff Needed": [2] * len(active_venues)
+        with tab2:
+            st.subheader("Seniority & Compatibility Tagging")
+            staff_list = ec_leaderboard['EC Name'].tolist()
+            
+            if 'mp_settings' not in st.session_state:
+                st.session_state.mp_settings = pd.DataFrame({
+                    'EC Name': staff_list,
+                    'Senior': False,
+                    'Partner': ["None"] * len(staff_list)
                 })
-                
-                manager_rs_ranked = st.data_editor(rs_data, hide_index=True)
 
-            with tab2:
-                st.subheader("Manpower & Partnerships")
-                staff_list = ec_leaderboard['EC Name'].tolist()
+            # Manager selects Seniors and Partners here
+            manpower_final = st.data_editor(
+                st.session_state.mp_settings,
+                column_config={"Partner": st.column_config.SelectboxColumn(options=["None"] + staff_list)},
+                hide_index=True,
+                key="mp_editor_v4"
+            )
+
+            st.divider()
+            st.subheader("Off-Day Selector (Following Week)")
+            days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+            if 'off_grid' not in st.session_state:
+                st.session_state.off_grid = pd.DataFrame({d: [False] * len(staff_list) for d in days})
+                st.session_state.off_grid['EC Name'] = staff_list
+            
+            off_days_final = st.data_editor(st.session_state.off_grid, hide_index=True)
+
+        with tab3:
+            day_to_gen = st.selectbox("Select Day to Deploy:", days)
+            
+            if st.button(f"Generate {day_to_gen} Schedule"):
+                # 1. Prepare Pool (Available staff for that day)
+                is_off = off_days_final[off_days_final[day_to_gen] == True]['EC Name'].tolist()
+                full_pool = ec_leaderboard.merge(manpower_final, on='EC Name')
+                working_pool = full_pool[~full_pool['EC Name'].isin(is_off)].to_dict('records')
                 
-                # EM Tagging Session State
-                if 'mp_config' not in st.session_state:
-                    st.session_state.mp_config = pd.DataFrame({
-                        'EC Name': staff_list,
-                        'Senior': False,
-                        'Partner': ["None"] * len(staff_list)
+                # 2. Sort Roadshows by Manager Points
+                sorted_rs = manager_input.sort_values(by=['Points', 'Rank'], ascending=[False, True])
+                
+                deployment = []
+                for _, rs in sorted_rs.iterrows():
+                    booth_team = []
+                    needed = int(rs['HC'])
+                    
+                    while len(booth_team) < needed and len(working_pool) > 0:
+                        p = working_pool.pop(0)
+                        booth_team.append(p['EC Name'])
+                        
+                        # Partnership Logic: If they have a partner, grab them next
+                        partner = p['Partner']
+                        if partner != "None" and len(booth_team) < needed:
+                            for idx, cand in enumerate(working_pool):
+                                if cand['EC Name'] == partner:
+                                    booth_team.append(working_pool.pop(idx)['EC Name'])
+                                    break
+                    
+                    deployment.append({
+                        "Venue": rs['Venue'],
+                        "Points": rs['Points'],
+                        "Staff Assigned": ", ".join(booth_team)
                     })
                 
-                manpower_settings = st.data_editor(
-                    st.session_state.mp_config,
-                    column_config={"Partner": st.column_config.SelectboxColumn(options=["None"] + staff_list)},
-                    hide_index=True,
-                    key="mp_editor_v3"
-                )
-
-                st.divider()
-                st.subheader("Upcoming Off-Days")
-                days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-                if 'off_grid_v3' not in st.session_state:
-                    st.session_state.off_grid_v3 = pd.DataFrame({day: [False] * len(staff_list) for day in days})
-                    st.session_state.off_grid_v3['EC Name'] = staff_list
-                
-                off_days_final = st.data_editor(st.session_state.off_grid_v3, hide_index=True)
-
-            with tab3:
-                gen_day = st.selectbox("Select Day to Generate:", days)
-                if st.button(f"Generate {gen_day} Deployment"):
-                    # Filtering Logic
-                    is_off = off_days_final[off_days_final[gen_day] == True]['EC Name'].tolist()
-                    pool_df = ec_leaderboard.merge(manpower_settings, on='EC Name')
-                    pool = pool_df[~pool_df['EC Name'].isin(is_off)].to_dict('records')
-                    
-                    # Sort Roadshows by Manager Points
-                    sorted_rs = manager_rs_ranked.sort_values(by=['Ranking Points', 'Priority'], ascending=[False, True])
-                    
-                    results = []
-                    for _, rs in sorted_rs.iterrows():
-                        team = []
-                        needed = int(rs['Staff Needed'])
-                        
-                        while len(team) < needed and len(pool) > 0:
-                            p = pool.pop(0)
-                            team.append(p['EC Name'])
-                            
-                            # EM Partnership Logic
-                            partner_name = p['Partner']
-                            if partner_name != "None" and len(team) < needed:
-                                for i, cand in enumerate(pool):
-                                    if cand['EC Name'] == partner_name:
-                                        team.append(pool.pop(i)['EC Name'])
-                                        break
-                        
-                        results.append({"Venue": rs['Venue'], "Points": rs['Ranking Points'], "Staff": ", ".join(team)})
-                    
-                    st.table(pd.DataFrame(results))
+                st.success(f"Successfully generated {day_to_gen} deployment!")
+                st.table(pd.DataFrame(deployment))
 
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Waiting for GID... Technical Error: {e}")
 else:
-    st.info("👈 Please enter the Stats GID in the sidebar to load your team.")
+    st.info("👈 Enter the GID from your Sales Ranking tab in the sidebar to load your data.")
