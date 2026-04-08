@@ -1,100 +1,125 @@
 import streamlit as st
 import pandas as pd
 
-st.set_page_config(page_title="EC Deployment Portal", layout="wide")
+st.set_page_config(page_title="EC Deployment Portal Pro", layout="wide")
 
-# --- DATA BASE URLS ---
-# We will append the GID dynamically based on the week selected
+# --- BASE URLS ---
 SALES_BASE = "https://docs.google.com/spreadsheets/d/15VuRw2_UR6CR8XdkxypjZSQ3QR8Ft7DD5ugy9uAGTco/export?format=csv&gid="
 ROADSHOW_URL = "https://docs.google.com/spreadsheets/d/1CKNsz4O11fTTB1kjb0y3GiIsRBww7ZxQmqpNK0AeLNw/export?format=csv&gid=1287774189"
 
-# --- CONFIGURATION: MAP YOUR GIDS HERE ---
-# REPLACE THE NUMBERS BELOW with the actual GIDs from your browser URL for each tab
-WEEKS_CONFIG = {
-    "13 Apr - 19 Apr (using 23 Mar - 05 Apr stats)": "ENTER_GID_FOR_MAR23_TAB_HERE",
-    "20 Apr - 26 Apr (using 30 Mar - 12 Apr stats)": "ENTER_GID_FOR_MAR30_TAB_HERE"
-}
+st.title("🚀 EC Advanced Deployment System")
 
-st.title("🚀 EC Weekly Deployment System")
+# --- TAB 1: DATA SETUP ---
+tab1, tab2, tab3, tab4 = st.tabs(["🔗 Data Setup", "👤 Manpower Master", "📅 Off-Day Planner", "💎 Generate Schedule"])
 
-def load_data(sales_gid):
-    s = pd.read_csv(SALES_BASE + str(sales_gid))
-    r = pd.read_csv(ROADSHOW_URL)
-    return s, r
-
-# --- STEP 1: SELECT DEPLOYMENT WEEK ---
-st.subheader("🗓️ Select Deployment Week")
-selected_week = st.selectbox("Which week are you planning for?", options=list(WEEKS_CONFIG.keys()))
-current_gid = WEEKS_CONFIG[selected_week]
-
-try:
-    if current_gid == "ENTER_GID_FOR_MAR23_TAB_HERE":
-        st.warning("⚠️ You need to update the GID numbers in your app.py code on GitHub to make this work.")
+with tab1:
+    st.subheader("Google Sheet Connection")
+    # This allows you to key in the GID yourself
+    sales_gid = st.text_input("Enter the GID for this week's Sales Stats:", placeholder="e.g. 12345678")
+    
+    if sales_gid:
+        try:
+            df_sales = pd.read_csv(SALES_BASE + sales_gid)
+            df_roadshows = pd.read_csv(ROADSHOW_URL)
+            st.success("Data Connected Successfully!")
+            
+            st.divider()
+            st.subheader("Roadshow Priority")
+            # Using 'Theme' as location based on your previous logs
+            rs_list = df_roadshows[['Theme']].dropna().drop_duplicates()
+            rs_list['Priority'] = range(1, len(rs_list) + 1)
+            rs_list['Required HC'] = 2
+            ranked_rs = st.data_editor(rs_list, hide_index=True, key="rs_editor")
+        except Exception as e:
+            st.error(f"Error: {e}. Please check the GID and Sheet sharing settings.")
+            st.stop()
+    else:
+        st.info("Waiting for Sales GID to be entered...")
         st.stop()
 
-    df_sales, df_roadshows = load_data(current_gid)
+# --- TAB 2: MANPOWER MASTER ---
+with tab2:
+    st.subheader("Seniority & Compatibility")
+    st.info("Mark your Seniors and select who works best together.")
+    
+    # Prepare a configuration table for ECs
+    staff_names = df_sales['EC Name'].dropna().unique().tolist()
+    
+    if 'manpower_settings' not in st.session_state:
+        st.session_state.manpower_settings = pd.DataFrame({
+            'EC Name': staff_names,
+            'Senior': False,
+            'Partner': ["None"] * len(staff_names)
+        })
 
-    # --- MATCHING COLUMNS ---
-    name_col = "EC Name"
-    srr_col = "SRR"
-    loc_col = "Theme" 
+    manpower_master = st.data_editor(
+        st.session_state.manpower_settings,
+        column_config={
+            "Partner": st.column_config.SelectboxColumn(options=["None"] + staff_names)
+        },
+        hide_index=True,
+        key="manpower_editor"
+    )
 
-    tab1, tab2 = st.tabs(["⚙️ Manager Inputs", "📅 Generated Schedule"])
+# --- TAB 3: OFF-DAY PLANNER ---
+with tab3:
+    st.subheader("Upcoming Week Off-Day Selector")
+    st.write("Planning for the following week? Select who is OFF for each day.")
+    
+    # Create an off-day grid
+    days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    if 'off_day_grid' not in st.session_state:
+        grid_data = {day: [False] * len(staff_names) for day in days}
+        grid_data['EC Name'] = staff_names
+        st.session_state.off_day_grid = pd.DataFrame(grid_data)
 
-    with tab1:
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("1. Roadshow Settings")
-            rs_list = df_roadshows[[loc_col]].dropna().drop_duplicates()
-            rs_list['Priority'] = range(1, len(rs_list) + 1)
-            rs_list['Required HC'] = 2 
-            ranked_df = st.data_editor(rs_list, hide_index=True)
+    off_days_final = st.data_editor(st.session_state.off_day_grid, hide_index=True, key="off_editor")
+
+# --- TAB 4: GENERATOR ---
+with tab4:
+    if st.button("🚀 RUN SMART DEPLOYMENT"):
+        # 1. Logic for daily generation (example for Monday)
+        # In a full app, you might loop through all 7 days
+        st.subheader("Generated Deployment (Preview: Monday)")
         
-        with col2:
-            st.subheader("2. Weekly Off-Days")
-            staff_list = df_sales[name_col].dropna().unique().tolist()
-            off_staff = st.multiselect("Who is OFF this week?", options=staff_list)
-
-    with tab2:
-        if st.button("🚀 GENERATE DEPLOYMENT"):
-            # 1. Prepare Staff Pool from the SELECTED STATS TAB
-            working_staff = df_sales[~df_sales[name_col].isin(off_staff)].copy()
+        # Filter available (Not OFF on Monday)
+        is_off_mon = off_days_final[off_days_final['Mon'] == True]['EC Name'].tolist()
+        available = df_sales[~df_sales['EC Name'].isin(is_off_mon)].copy()
+        
+        # Merge with Manpower Settings (Seniors/Partners)
+        available = available.merge(manpower_master, on='EC Name')
+        
+        # Sort by SRR (Assume 'SRR' column exists)
+        available['SRR'] = pd.to_numeric(available['SRR'].astype(str).str.replace('%', ''), errors='coerce').fillna(0)
+        available = available.sort_values(by='SRR', ascending=False)
+        
+        pool = available.to_dict('records')
+        deployment = []
+        
+        # 2. Assignment Algorithm
+        for _, rs in ranked_rs.sort_values('Priority').iterrows():
+            loc = rs['Theme']
+            needed = int(rs['Required HC'])
+            team = []
             
-            # Clean SRR column
-            working_staff[srr_col] = pd.to_numeric(working_staff[srr_col].astype(str).str.replace('%', ''), errors='coerce').fillna(0)
-            working_staff = working_staff.sort_values(by=srr_col, ascending=False)
-            
-            # 2. Logic: Top 5 in the ranking are "Seniors"
-            pool = working_staff.to_dict('records')
+            # Priority 1: Senior + their Partner
             for i, p in enumerate(pool):
-                p['is_senior'] = True if i < 5 else False
+                if p['Senior'] and len(team) < needed:
+                    team.append(pool.pop(i)['EC Name'])
+                    # Check if partner is available in pool
+                    partner_name = p['Partner']
+                    for j, potential_partner in enumerate(pool):
+                        if potential_partner['EC Name'] == partner_name and len(team) < needed:
+                            team.append(pool.pop(j)['EC Name'])
+                            break
+                    break # Stop looking for seniors for this booth once one is found
             
-            # 3. Assignment
-            final_schedule = []
-            for _, rs in ranked_df.sort_values('Priority').iterrows():
-                location = rs[loc_col]
-                needed = int(rs['Required HC'])
-                assigned = []
-                
-                # Rule A: Assign 1 Senior first
-                for i, person in enumerate(pool):
-                    if person['is_senior']:
-                        assigned.append(pool.pop(i)[name_col])
-                        break
-                
-                # Rule B: Fill rest
-                while len(assigned) < needed and len(pool) > 0:
-                    assigned.append(pool.pop(0)[name_col])
-                
-                final_schedule.append({
-                    "Location": location,
-                    "Total HC": len(assigned),
-                    "Team Members": ", ".join(assigned)
-                })
+            # Priority 2: Fill remaining slots with Top Ranked
+            while len(team) < needed and len(pool) > 0:
+                team.append(pool.pop(0)['EC Name'])
             
-            st.success(f"Deployment Generated using stats from: {selected_week}")
-            result_df = pd.DataFrame(final_schedule)
-            st.table(result_df)
-
-except Exception as e:
-    st.error(f"Waiting for correct GID selection... Error: {e}")
+            deployment.append({"Location": loc, "Team": ", ".join(team)})
+        
+        # Results
+        st.success("Deployment Optimized with Partnerships!")
+        st.table(pd.DataFrame(deployment))
