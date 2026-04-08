@@ -9,8 +9,8 @@ st.markdown("Use this tool to rank roadshows and set off-days without touching t
 
 # --- 1. CONNECT TO YOUR SHEETS ---
 # Replace these with your actual Sheet IDs
-SALES_SHEET = "https://docs.google.com/spreadsheets/d/15VuRw2_UR6CR8XdkxypjZSQ3QR8Ft7DD5ugy9uAGTco/edit#gid=0"
-ROADSHOW_SHEET = "https://docs.google.com/spreadsheets/d/1CKNsz4O11fTTB1kjb0y3GiIsRBww7ZxQmqpNK0AeLNw/edit#gid=1287774189"
+SALES_SHEET = "https://docs.google.com/spreadsheets/d/15VuRw2_UR6CR8XdkxypjZSQ3QR8Ft7DD5ugy9uAGTco/edit?usp=sharing"
+ROADSHOW_SHEET = "https://docs.google.com/spreadsheets/d/1CKNsz4O11fTTB1kjb0y3GiIsRBww7ZxQmqpNK0AeLNw/edit?usp=sharing"
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
